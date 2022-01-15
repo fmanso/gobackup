@@ -26,15 +26,24 @@ func UploadFiles(hashedFiles []structs.BackedFile) {
 
 func uploadFile(hashedFile structs.BackedFile) {
 	file, _ := os.Open(hashedFile.Path)
+	fileInfo, _ := file.Stat()
 	defer file.Close()
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
+	writer.WriteField("Path", hashedFile.Path)
+	writer.WriteField("ModifiedOn", fileInfo.ModTime().String())
 	part, _ := writer.CreateFormFile("file", filepath.Base(file.Name()))
 	io.Copy(part, file)
 	writer.Close()
 
-	r, _ := http.NewRequest("POST", "http://localhost:8080/upload/"+hashedFile.Hash, body)
+	r, err := http.NewRequest("POST", "http://localhost:8080/upload/"+hashedFile.Hash, body)
+
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+
 	r.Header.Add("Content-Type", writer.FormDataContentType())
 	client := &http.Client{}
 	resp, err := client.Do(r)
@@ -45,4 +54,9 @@ func uploadFile(hashedFile structs.BackedFile) {
 	}
 
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Fatal("StatusCode ", resp.StatusCode)
+		return
+	}
 }
