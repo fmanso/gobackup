@@ -17,3 +17,5 @@
 server/cmd/gobckserver/store
 .vscode
 
+client.db
+

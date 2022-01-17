@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"path"
@@ -71,8 +72,28 @@ func main() {
 		c.JSON(http.StatusOK, files)
 	})
 
+	router.GET("/file/:id", func(c *gin.Context) {
+		file := BackedFile{}
+		log.Println("Requested file ", c.Param("id"))
+		gormdb.Debug().Where(BackedFile{Hash: c.Param("id")}).First(&file)
+		if file.Hash == "" {
+			c.AbortWithError(http.StatusNotFound, nil)
+		}
+
+		filePath := path.Join(storePath, file.Hash)
+
+		c.Header("Content-Description", "File Transfer")
+		c.Header("Content-Transfer-Encoding", "binary")
+		c.Header("Content-Disposition", "attachment")
+		c.Header("Content-Type", "application/octet-stream")
+		c.File(filePath)
+
+	})
+
 	router.Run(":8080")
 }
+
+const fileChunk = 8192
 
 func receiveAndStoreFile(storePath string, id string, c *gin.Context) (int64, string, error) {
 	file, err := c.FormFile("file")
@@ -86,7 +107,9 @@ func receiveAndStoreFile(storePath string, id string, c *gin.Context) (int64, st
 		return 0, "", err
 	}
 
-	buffer := make([]byte, 1024*16)
+	defer bodyFile.Close()
+
+	blocks := uint64(math.Ceil(float64(file.Size) / float64(fileChunk)))
 	savedFilePath := path.Join(storePath, id)
 	savedFile, err := os.Create(savedFilePath)
 
@@ -100,8 +123,10 @@ func receiveAndStoreFile(storePath string, id string, c *gin.Context) (int64, st
 	defer savedFile.Close()
 	calculatedSize := int64(0)
 	calcHash := md5.New()
-	for {
-		bytesRead, err := bodyFile.Read(buffer)
+	for i := uint64(0); i < blocks; i++ {
+		blocksize := int(math.Min(fileChunk, float64(file.Size-int64(i*fileChunk))))
+		buf := make([]byte, blocksize)
+		bytesRead, err := bodyFile.Read(buf)
 
 		if err != nil {
 			if err != io.EOF {
@@ -112,8 +137,13 @@ func receiveAndStoreFile(storePath string, id string, c *gin.Context) (int64, st
 		}
 
 		calculatedSize += int64(bytesRead)
-		io.WriteString(calcHash, string(buffer))
-		savedFile.Write(buffer[:bytesRead])
+		io.WriteString(calcHash, string(buf))
+		savedFile.Write(buf)
+	}
+
+	h := fmt.Sprintf("%x", calcHash.Sum(nil))
+	if id != h {
+		log.Fatal("Calculated hash: ", h, " Request hash: ", id)
 	}
 
 	return calculatedSize, fmt.Sprintf("%x", calcHash.Sum(nil)), nil

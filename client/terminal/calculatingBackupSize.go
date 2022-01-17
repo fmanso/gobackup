@@ -18,19 +18,19 @@ func (b *CalculatingBackupSize) Start() {
 
 func (b *CalculatingBackupSize) Update(backupSize int64) {
 	if time.Since(b.lastUpdate).Milliseconds() > 10 {
-		text := fmt.Sprintf("Backup Size: %s", calculateSizeProgress(backupSize))
+		text := fmt.Sprintf("Backup Size: %s", CalculateSizeProgress(backupSize))
 		pterm.Printo(text)
 		b.lastUpdate = time.Now()
 	}
 }
 
 func (b *CalculatingBackupSize) End(backupSize int64) {
-	text := fmt.Sprintf("Backup Size: %s", calculateSizeProgress(backupSize))
+	text := fmt.Sprintf("Backup Size: %s", CalculateSizeProgress(backupSize))
 	pterm.Printo(text)
 	pterm.Println()
 }
 
-func calculateSizeProgress(backupSize int64) string {
+func CalculateSizeProgress(backupSize int64) string {
 	mb := backupSize >> 20
 	if mb < 1000 {
 		return fmt.Sprintf("%d MB", mb)
