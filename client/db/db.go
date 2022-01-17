@@ -1,6 +1,7 @@
 package db
 
 import (
+	"errors"
 	"log"
 	"time"
 
@@ -14,7 +15,7 @@ type BackupDb struct {
 	db *gorm.DB
 }
 
-func CreateDatabase(file string) *BackupDb {
+func Open(file string) *BackupDb {
 	gormdb, err := gorm.Open(sqlite.Open(file), &gorm.Config{})
 	if err != nil {
 		log.Fatal(err)
@@ -25,6 +26,12 @@ func CreateDatabase(file string) *BackupDb {
 	return &BackupDb{gormdb}
 }
 
+func (bdb *BackupDb) GetBackedFiles() []structs.BackedFile {
+	backedFiles := []structs.BackedFile{}
+	bdb.db.Find(&backedFiles)
+	return backedFiles
+}
+
 func (bdb *BackupDb) Insert(hashedFile *structs.BackedFile) {
 	bdb.db.Save(hashedFile)
 }
@@ -32,21 +39,14 @@ func (bdb *BackupDb) Insert(hashedFile *structs.BackedFile) {
 func (bdb *BackupDb) InsertBulk(hashedFiles []structs.BackedFile) {
 	bdb.db.Transaction(func(tx *gorm.DB) error {
 		for _, f := range hashedFiles {
-			bdb.Insert(&f)
+			result := bdb.db.Where(map[string]interface{}{"Path": f.Path, "Hash": f.Hash}).First(&structs.BackedFile{})
+			if result != nil && errors.Is(result.Error, gorm.ErrRecordNotFound) {
+				bdb.Insert(&f)
+			}
 		}
 
 		return nil
 	})
-}
-
-func (bdb *BackupDb) GetFilesNotUploaded() []structs.BackedFile {
-	hashedFiles := []structs.BackedFile{}
-	bdb.db.Where(map[string]interface{}{"uploaded": 0}).Find(&hashedFiles)
-	return hashedFiles
-}
-
-func (bdb *BackupDb) Clear() {
-	bdb.db.Exec("DELETE FROM hashed_files")
 }
 
 func (bdb *BackupDb) SetUploaded(hash string, size int64) {

@@ -19,13 +19,16 @@ import (
 func PerformBackup(path string) {
 	rootPath := path
 	start := time.Now()
+	database := db.Open("client.db")
+
+	backedFiles := database.GetBackedFiles()
 
 	fileList := calculateBackupSize(rootPath)
-	batch1, batch2 := hashFiles(fileList)
+	filesToBackup := findFilesToBackup(backedFiles, fileList)
+	batch1, batch2 := hashFiles(filesToBackup)
 	files := append(batch1, batch2...)
 
 	pterm.Println("Saving data to local database...")
-	database := db.CreateDatabase("client.db")
 	database.InsertBulk(files)
 	pterm.Success.Println("Data saved")
 
@@ -37,6 +40,40 @@ func PerformBackup(path string) {
 	log.Println("Uploaded files: ", len(files))
 	elapsed := time.Since(start)
 	log.Printf("Process took: %s", elapsed)
+}
+
+func findFilesToBackup(backedFiles []structs.BackedFile, fileList []string) []string {
+	filesToBackup := []string{}
+	ignoredFiles := 0
+	for _, f := range fileList {
+		if needsFileToBeBackedUp(f, backedFiles) {
+			filesToBackup = append(filesToBackup, f)
+		} else {
+			ignoredFiles++
+		}
+	}
+
+	log.Println("Ignored files: ", ignoredFiles)
+	return filesToBackup
+}
+
+func needsFileToBeBackedUp(file string, backedFiles []structs.BackedFile) bool {
+	fileInfo, err := os.Stat(file)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for _, b := range backedFiles {
+		if file == b.Path {
+			if fileInfo.ModTime().After(b.ModifiedOn) {
+				return true
+			} else {
+				return false
+			}
+		}
+	}
+
+	return true
 }
 
 func calculateBackupSize(rootPath string) []string {
@@ -111,8 +148,9 @@ func hash(files []string, c chan []structs.BackedFile, p chan int64) {
 		}
 
 		hashedFile := structs.BackedFile{
-			Path: f,
-			Hash: hash,
+			Path:       f,
+			Hash:       hash,
+			ModifiedOn: getModificationDate(f),
 		}
 
 		hashedFiles = append(hashedFiles, hashedFile)
@@ -120,4 +158,13 @@ func hash(files []string, c chan []structs.BackedFile, p chan int64) {
 	}
 
 	c <- hashedFiles
+}
+
+func getModificationDate(f string) time.Time {
+	fileInfo, err := os.Stat(f)
+	if err != nil {
+		return time.Unix(0, 0)
+	}
+
+	return fileInfo.ModTime()
 }

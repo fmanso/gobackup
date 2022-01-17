@@ -14,4 +14,5 @@ type BackedFile struct {
 	ModifiedOn time.Time
 	CreatedOn  time.Time
 	UploadedOn time.Time
+	Uploaded   bool
 }
