@@ -13,16 +13,13 @@ import (
 	"github.com/manso/gobackup/client/path"
 	"github.com/manso/gobackup/client/terminal"
 	"github.com/pterm/pterm"
-	"gorm.io/gorm"
 )
 
 type BackedFile struct {
-	gorm.Model
 	Path       string
 	Hash       string
 	Size       int64
 	ModifiedOn time.Time
-	UploadedOn time.Time
 }
 
 func PerformRestore(rootPath string) {

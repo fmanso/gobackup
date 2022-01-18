@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/md5"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"sort"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -18,11 +20,24 @@ import (
 
 type BackedFile struct {
 	gorm.Model
+	Path     string
+	Versions []BackedFileVersion
+}
+
+type BackedFileVersion struct {
+	gorm.Model
+	BackedFileID uint
+	Hash         string
+	Size         int64
+	ModifiedOn   time.Time
+	UploadedOn   time.Time
+}
+
+type BackedFilesResponse struct {
 	Path       string
 	Hash       string
 	Size       int64
 	ModifiedOn time.Time
-	UploadedOn time.Time
 }
 
 func main() {
@@ -44,6 +59,7 @@ func main() {
 	}
 
 	gormdb.AutoMigrate(&BackedFile{})
+	gormdb.AutoMigrate(&BackedFileVersion{})
 
 	router.POST("/upload/:id", func(c *gin.Context) {
 		size, calcHash, err := receiveAndStoreFile(storePath, c.Param("id"), c)
@@ -55,33 +71,54 @@ func main() {
 		defer c.Request.Body.Close()
 
 		modifiedOn, _ := time.Parse("2006-01-02 15:04:05.999999999 -0700 MST", c.Request.FormValue("ModifiedOn"))
-		gormdb.Save(&BackedFile{
-			Path:       c.Request.FormValue("Path"),
+
+		path := c.Request.FormValue("Path")
+
+		backedFile := BackedFile{}
+		result := gormdb.Where(&BackedFile{Path: path}).First(&backedFile)
+		if result.Error != nil && errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			backedFile.Path = path
+		}
+
+		backedFile.Versions = append(backedFile.Versions, BackedFileVersion{
 			Hash:       calcHash,
 			Size:       size,
 			ModifiedOn: modifiedOn,
 			UploadedOn: time.Now(),
 		})
 
+		gormdb.Save(&backedFile)
 		c.String(http.StatusOK, "")
 	})
 
 	router.GET("/files/", func(c *gin.Context) {
 		files := []BackedFile{}
-		gormdb.Find(&files)
-		c.JSON(http.StatusOK, files)
+		gormdb.Preload("Versions").Find(&files)
+
+		response := []BackedFilesResponse{}
+
+		for _, f := range files {
+			v := getLatesVersion(f)
+			response = append(response, BackedFilesResponse{
+				Hash:       v.Hash,
+				Size:       v.Size,
+				Path:       f.Path,
+				ModifiedOn: v.ModifiedOn,
+			})
+		}
+
+		c.JSON(http.StatusOK, response)
 	})
 
-	router.GET("/file/:id", func(c *gin.Context) {
-		file := BackedFile{}
-		log.Println("Requested file ", c.Param("id"))
-		gormdb.Debug().Where(BackedFile{Hash: c.Param("id")}).First(&file)
-		if file.Hash == "" {
+	router.GET("/file/:hash", func(c *gin.Context) {
+		fileVersion := BackedFileVersion{}
+		log.Println("Requested hash ", c.Param("hash"))
+		result := gormdb.Where(BackedFileVersion{Hash: c.Param("hash")}).First(&fileVersion)
+		if result.Error != nil {
 			c.AbortWithError(http.StatusNotFound, nil)
 		}
 
-		filePath := path.Join(storePath, file.Hash)
-
+		filePath := path.Join(storePath, fileVersion.Hash)
 		c.Header("Content-Description", "File Transfer")
 		c.Header("Content-Transfer-Encoding", "binary")
 		c.Header("Content-Disposition", "attachment")
@@ -91,6 +128,14 @@ func main() {
 	})
 
 	router.Run(":8080")
+}
+
+func getLatesVersion(f BackedFile) BackedFileVersion {
+	sort.SliceStable(f.Versions, func(i, j int) bool {
+		return f.Versions[i].ModifiedOn.After(f.Versions[j].ModifiedOn)
+	})
+
+	return f.Versions[0]
 }
 
 const fileChunk = 8192
