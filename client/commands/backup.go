@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"path/filepath"
 	"time"
 
 	"github.com/manso/gobackup/client/api"
@@ -17,7 +18,11 @@ import (
 )
 
 func PerformBackup(path string) {
-	rootPath := path
+	rootPath, err := filepath.Abs(path)
+	if err != nil {
+		panic(err)
+	}
+
 	start := time.Now()
 	database := db.Open("client.db")
 
