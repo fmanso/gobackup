@@ -8,35 +8,11 @@ import (
 	"github.com/manso/gobackup/server/store"
 )
 
-type BackedFileStoreFake struct {
-	save                 func(backedFile *store.BackedFile) error
-	findBackedFileByPath func(path string) *store.BackedFile
-}
-
-func (b *BackedFileStoreFake) Save(backedFile *store.BackedFile) error {
-	return b.save(backedFile)
-}
-
-func (b *BackedFileStoreFake) FindBackedFileByPath(path string) *store.BackedFile {
-	return b.findBackedFileByPath(path)
-}
-
-type ioReader struct {
-}
-
-func (io *ioReader) Read(p []byte) (n int, err error) {
-	for i := range p {
-		p[i] = 1
-	}
-
-	return 10, nil
-}
-
 func TestUploadShould(t *testing.T) {
 	t.Run("upload file", func(t *testing.T) {
 		saveCalled := false
 		findBackedFileByPathArg := ""
-		backedFileStorer := BackedFileStoreFake{
+		backedFileStorer := backedFileStoreFake{
 			save: func(b *store.BackedFile) error {
 				saveCalled = true
 				return nil

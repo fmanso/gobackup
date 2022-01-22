@@ -30,6 +30,8 @@ type BackedFileStore struct {
 type BackedFileStorer interface {
 	Save(backedFile *BackedFile) error
 	FindBackedFileByPath(path string) *BackedFile
+	GetBackedFiles() []BackedFile
+	FindBackedFileVersionByHash(hash string) *BackedFileVersion
 }
 
 func Open(path string) *BackedFileStore {
