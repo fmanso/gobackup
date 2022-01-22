@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/md5"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -14,24 +13,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
+	app "github.com/manso/gobackup/server/appservices"
+	"github.com/manso/gobackup/server/store"
 )
-
-type BackedFile struct {
-	gorm.Model
-	Path     string
-	Versions []BackedFileVersion
-}
-
-type BackedFileVersion struct {
-	gorm.Model
-	BackedFileID uint
-	Hash         string
-	Size         int64
-	ModifiedOn   time.Time
-	UploadedOn   time.Time
-}
 
 type BackedFilesResponse struct {
 	Path       string
@@ -52,53 +36,45 @@ func main() {
 		}
 	}
 
-	router := gin.Default()
-	gormdb, err := gorm.Open(sqlite.Open(path.Join(storePath, "backup.db")), &gorm.Config{})
-	if err != nil {
-		panic(err)
-	}
+	bfStore := store.Open(path.Join(storePath, "gobackup.go"))
 
-	gormdb.AutoMigrate(&BackedFile{})
-	gormdb.AutoMigrate(&BackedFileVersion{})
+	log.Println("Backed up files: ", bfStore.GetBackedFileCount())
+
+	router := gin.Default()
 
 	router.POST("/upload/:id", func(c *gin.Context) {
-		size, calcHash, err := receiveAndStoreFile(storePath, c.Param("id"), c)
+		modifiedOn, err := time.Parse("2006-01-02 15:04:05.999999999 -0700 MST", c.Request.FormValue("ModifiedOn"))
 		if err != nil {
-			log.Fatal(err)
 			c.AbortWithError(http.StatusBadRequest, err)
 		}
 
-		defer c.Request.Body.Close()
-
-		modifiedOn, _ := time.Parse("2006-01-02 15:04:05.999999999 -0700 MST", c.Request.FormValue("ModifiedOn"))
-
-		path := c.Request.FormValue("Path")
-
-		backedFile := BackedFile{}
-		result := gormdb.Where(&BackedFile{Path: path}).First(&backedFile)
-		if result.Error != nil && errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			backedFile.Path = path
+		formFile, err := c.FormFile("file")
+		if err != nil {
+			c.AbortWithError(http.StatusBadRequest, err)
 		}
 
-		backedFile.Versions = append(backedFile.Versions, BackedFileVersion{
-			Hash:       calcHash,
-			Size:       size,
-			ModifiedOn: modifiedOn,
-			UploadedOn: time.Now(),
-		})
+		bodyFile, err := formFile.Open()
+		if err != nil {
+			c.AbortWithError(http.StatusBadRequest, err)
+		}
 
-		gormdb.Save(&backedFile)
+		defer bodyFile.Close()
+
+		err = app.UploadFile(bfStore, storePath, c.Param("id"), c.Request.FormValue("Path"), modifiedOn, formFile.Size, bodyFile)
+
+		if err != nil {
+			c.AbortWithError(http.StatusBadRequest, err)
+		}
+
 		c.String(http.StatusOK, "")
 	})
 
 	router.GET("/files/", func(c *gin.Context) {
-		files := []BackedFile{}
-		gormdb.Preload("Versions").Find(&files)
-
+		files := bfStore.GetBackedFiles()
 		response := []BackedFilesResponse{}
 
 		for _, f := range files {
-			v := getLatesVersion(f)
+			v := getLatesVersion(&f)
 			response = append(response, BackedFilesResponse{
 				Hash:       v.Hash,
 				Size:       v.Size,
@@ -111,10 +87,9 @@ func main() {
 	})
 
 	router.GET("/file/:hash", func(c *gin.Context) {
-		fileVersion := BackedFileVersion{}
 		log.Println("Requested hash ", c.Param("hash"))
-		result := gormdb.Where(BackedFileVersion{Hash: c.Param("hash")}).First(&fileVersion)
-		if result.Error != nil {
+		fileVersion := bfStore.FindBackedFileVersionByHash(c.Param("hash"))
+		if fileVersion == nil {
 			c.AbortWithError(http.StatusNotFound, nil)
 		}
 
@@ -130,12 +105,12 @@ func main() {
 	router.Run(":8080")
 }
 
-func getLatesVersion(f BackedFile) BackedFileVersion {
+func getLatesVersion(f *store.BackedFile) *store.BackedFileVersion {
 	sort.SliceStable(f.Versions, func(i, j int) bool {
 		return f.Versions[i].ModifiedOn.After(f.Versions[j].ModifiedOn)
 	})
 
-	return f.Versions[0]
+	return &f.Versions[0]
 }
 
 const fileChunk = 8192
